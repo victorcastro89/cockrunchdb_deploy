@@ -51,8 +51,17 @@ node3 ansible_host=192.168.1.162 ansible_ssh_private_key_file=~/.ssh/id_rsa
 ```bash
 echo "your_vault_password" > .vault_pass
 ```
+4. Create vault.yml for database password:
 
-4. Configure variables (if needed):
+bashCopycat > inventories/production/group_vars/all/vault.yml << EOL
+---
+vault_cockroachdb_admin_password: "your_safe_db_password"
+EOL
+
+# Encrypt the vault file
+ansible-vault encrypt inventories/production/group_vars/all/vault.yml
+
+5. Configure variables (if needed):
    - Edit `inventories/production/group_vars/all/main.yml`
    - Key settings:
      ```yaml
