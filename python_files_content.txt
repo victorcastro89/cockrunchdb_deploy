@@ -1,0 +1,1647 @@
+#./site.yml
+---
+- name: Deploy CockroachDB Cluster
+  hosts: cockroachdb_cluster
+  become: yes
+
+  pre_tasks:
+    - name: Check system requirements
+      assert:
+        that:
+          - ansible_memtotal_mb >= 1024
+          - ansible_processor_vcpus >= 2
+        msg: "System does not meet minimum requirements"
+
+  roles:
+    - common
+    - cockroachdb
+    - security
+    - monitoring
+    - startdb
+
+
+
+#./ansible.cfg
+[defaults]
+inventory = ./inventories/production
+roles_path = ./roles
+vault_password_file = ./.vault_pass
+host_key_checking = False
+forks = 10
+
+[ssh_connection]
+pipelining = True
+ssh_args = -o ControlMaster=auto -o ControlPersist=30m
+
+#./python_files_content.txt
+#./site.yml
+---
+- name: Deploy CockroachDB Cluster
+  hosts: cockroachdb_cluster
+  become: yes
+
+  pre_tasks:
+    - name: Check system requirements
+      assert:
+        that:
+          - ansible_memtotal_mb >= 1024
+          - ansible_processor_vcpus >= 2
+        msg: "System does not meet minimum requirements"
+
+  roles:
+    - common
+    - cockroachdb
+    - security
+    - monitoring
+    - startdb
+  post_tasks:
+    - name: Initialize CockroachDB cluster
+      command: >
+        /usr/local/bin/cockroach init
+        --host={{ groups['cockroachdb_cluster'][0] }}:{{ cockroachdb.cluster_port }} --insecure
+      delegate_to: localhost
+      when: inventory_hostname == groups['cockroachdb_cluster'][0]
+
+#./ansible.cfg
+[defaults]
+inventory = ./inventories/production
+roles_path = ./roles
+vault_password_file = ./.vault_pass
+host_key_checking = False
+forks = 10
+
+[ssh_connection]
+pipelining = True
+ssh_args = -o ControlMaster=auto -o ControlPersist=30m
+
+#./python_files_content.txt
+#./site.yml
+---
+- name: Deploy CockroachDB Cluster
+  hosts: cockroachdb_cluster
+  become: yes
+
+  pre_tasks:
+    - name: Check system requirements
+      assert:
+        that:
+          - ansible_memtotal_mb >= 1024
+          - ansible_processor_vcpus >= 2
+        msg: "System does not meet minimum requirements"
+
+  roles:
+    - common
+    - cockroachdb
+    - security
+    - monitoring
+    - startdb
+  post_tasks:
+    - name: Initialize CockroachDB cluster
+      command: >
+        /usr/local/bin/cockroach init
+        --certs-dir={{ cockroachdb.certs_dir }}
+        --host={{ groups['cockroachdb_cluster'][0] }}:{{ cockroachdb.cluster_port }}
+      when: inventory_hostname == groups['cockroachdb_cluster'][0]
+
+#./ansible.cfg
+[defaults]
+inventory = ./inventories/production
+roles_path = ./roles
+vault_password_file = ./.vault_pass
+host_key_checking = False
+forks = 10
+
+[ssh_connection]
+pipelining = True
+ssh_args = -o ControlMaster=auto -o ControlPersist=30m
+
+#./python_files_content.txt
+#./site.yml
+---
+- name: Deploy CockroachDB Cluster
+  hosts: cockroachdb_cluster
+  become: yes
+
+  pre_tasks:
+    - name: Check system requirements
+      assert:
+        that:
+          - ansible_memtotal_mb >= 1024
+          - ansible_processor_vcpus >= 2
+        msg: "System does not meet minimum requirements"
+
+  roles:
+    - common
+    - security
+    - monitoring
+    - cockroachdb
+
+  post_tasks:
+    - name: Initialize CockroachDB cluster
+      command: >
+        /usr/local/bin/cockroach init
+        --certs-dir={{ cockroachdb.certs_dir }}
+        --host={{ groups['cockroachdb_cluster'][0] }}:{{ cockroachdb.cluster_port }}
+      when: inventory_hostname == groups['cockroachdb_cluster'][0]
+
+#./ansible.cfg
+[defaults]
+inventory = ./inventories/production
+roles_path = ./roles
+vault_password_file = ./.vault_pass
+host_key_checking = False
+forks = 10
+
+[ssh_connection]
+pipelining = True
+ssh_args = -o ControlMaster=auto -o ControlPersist=30m
+
+#./.vault_pass
+victor
+
+#./roles/monitoring/tasks/main.yml
+
+
+#./roles/common/tasks/main.yml
+
+
+- name: Update system
+  apt:
+    update_cache: yes
+    upgrade: yes
+
+- name: Install required packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - python3-pip
+      - ufw
+      - fail2ban
+      - chrony
+      - acl
+      - logrotate
+    state: present
+
+- name: Configure system limits
+  pam_limits:
+    domain: cockroach
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: soft, item: nofile, value: 65536 }
+    - { type: hard, item: nofile, value: 65536 }
+    - { type: soft, item: nproc, value: 32768 }
+    - { type: hard, item: nproc, value: 32768 }
+
+- name: Configure sysctl
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-cockroachdb.conf
+    reload: yes
+  loop:
+    - { name: "vm.swappiness", value: "1" }
+    - { name: "vm.max_map_count", value: "262144" }
+    - { name: "net.core.somaxconn", value: "65535" }
+    - { name: "net.ipv4.tcp_max_syn_backlog", value: "65535" }
+    - { name: "net.ipv4.tcp_syncookies", value: "1" }
+    - { name: "net.ipv4.tcp_fin_timeout", value: "30" }
+
+#./roles/security/tasks/main.yml
+---
+- name: Configure UFW
+  ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from | default(omit) }}"
+  loop:
+    - { port: "{{ cockroachdb.http_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.sql_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.cluster_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: 22, proto: tcp, from: "{{ admin_networks }}" }
+    - { port: "{{ monitoring.prometheus_port }}", proto: tcp, from: "{{ monitoring_networks }}" }
+
+- name: Configure SSL
+  block:
+    - name: Create SSL directory
+      file:
+        path: "{{ cockroachdb.certs_dir }}"
+        state: directory
+        owner: "{{ cockroachdb.user }}"
+        group: "{{ cockroachdb.group }}"
+        mode: '0750'
+
+    - name: Generate CA certificate
+      command: >
+        /usr/local/bin/cockroach cert create-ca
+        --certs-dir={{ cockroachdb.certs_dir }}
+        --ca-key={{ cockroachdb.certs_dir }}/ca.key
+      become: yes
+
+    - name: Generate node certificates
+      command: >
+        /usr/local/bin/cockroach cert create-node
+        {{ item }} localhost 127.0.0.1
+        --certs-dir={{ cockroachdb.certs_dir }}
+        --ca-key={{ cockroachdb.certs_dir }}/ca.key
+      become: yes
+      loop: "{{ groups['cockroachdb_cluster'] }}"
+
+    - name: Generate client certificates
+      command: >
+        /usr/local/bin/cockroach cert create-client
+        root
+        --certs-dir={{ cockroachdb.certs_dir }}
+        --ca-key={{ cockroachdb.certs_dir }}/ca.key
+      become: yes
+
+
+    - name: Set ownership of SSL directory
+      file:
+        path: "{{ cockroachdb.certs_dir }}"
+        owner: "{{ cockroachdb.user }}"
+        group: "{{ cockroachdb.group }}"
+        recurse: yes
+      become: yes
+  when: security.ssl.enabled
+
+#./roles/cockroachdb/templates/local.ini.j2
+cluster-id: "cockroachdb-cluster"
+listen-addr: "{{ ansible_host }}:{{ cockroachdb.cluster_port }}"
+http-addr: "{{ ansible_host }}:{{ cockroachdb.http_port }}"
+sql-addr: "{{ ansible_host }}:{{ cockroachdb.sql_port }}"
+cache: "{{ cockroachdb.cache_size }}"
+max-sql-memory: "{{ cockroachdb.max_memory }}"
+max-disk-temp-storage: "{{ cockroachdb.max_disk_temp }}"
+locality: "{{ cockroachdb.locality }}"
+certs-dir: "{{ cockroachdb.certs_dir }}"
+log-dir: "{{ cockroachdb.log_dir }}"
+
+#./roles/cockroachdb/templates/cockroachdb.service.j2
+[Unit]
+Description=CockroachDB
+Requires=network.target
+
+[Service]
+Type=simple
+User={{ cockroachdb.user }}
+Group={{ cockroachdb.group }}
+ExecStart=/usr/local/bin/cockroach start \
+    --certs-dir={{ cockroachdb.certs_dir }} \
+    --store={{ cockroachdb.data_dir }} \
+    --listen-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+    --http-addr={{ ansible_host }}:{{ cockroachdb.http_port }} \
+    --sql-addr={{ ansible_host }}:{{ cockroachdb.sql_port }} \
+    --cache={{ cockroachdb.cache_size }} \
+    --max-sql-memory={{ cockroachdb.max_memory }} \
+    --max-disk-temp-storage={{ cockroachdb.max_disk_temp }} \
+    --locality={{ cockroachdb.locality }} \
+    --log-dir={{ cockroachdb.log_dir }} \
+    --join={{ groups['cockroachdb_cluster'] | map('extract', hostvars, ['ansible_host']) | join(':' + cockroachdb.cluster_port + ',') }}:{{ cockroachdb.cluster_port }}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cockroachdb
+
+[Install]
+WantedBy=multi-user.target
+
+#./roles/cockroachdb/tasks/setup.yml
+
+---
+- name: Create cockroach group
+  group:
+    name: "{{ cockroachdb.group }}"
+    system: yes
+  become: yes
+
+- name: Create cockroach user
+  user:
+    name: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    system: yes
+    shell: /bin/false
+    home: "{{ cockroachdb.data_dir }}"
+    create_home: no
+  become: yes
+
+#./roles/cockroachdb/tasks/main.yml
+---
+- name: Include setup tasks
+  include_tasks: setup.yml
+
+- name: Download CockroachDB binary
+  get_url:
+    url: "https://binaries.cockroachdb.com/cockroach-v{{ cockroachdb.version }}.linux-amd64.tgz"
+    dest: "/tmp/cockroach.tgz"
+    mode: '0644'
+    validate_certs: no
+  become: yes
+  register: download_result
+  retries: 3
+  delay: 5
+  until: download_result is succeeded
+
+- name: Debug download result
+  debug:
+    var: download_result
+    verbosity: 2
+
+- name: Check if archive exists
+  stat:
+    path: "/tmp/cockroach.tgz"
+  register: archive_stat
+
+- name: Debug archive stat
+  debug:
+    var: archive_stat
+    verbosity: 2
+
+- name: Extract CockroachDB
+  unarchive:
+    src: "/tmp/cockroach.tgz"
+    dest: "/usr/local/bin/"
+    remote_src: yes
+    extra_opts: ["--strip-components=1"]
+  become: yes
+  register: extract_result
+  when: archive_stat.stat.exists
+
+- name: Debug extract result
+  debug:
+    var: extract_result
+    verbosity: 2
+
+- name: Check cockroach binary
+  stat:
+    path: "/usr/local/bin/cockroach"
+  register: binary_stat
+
+- name: Debug binary stat
+  debug:
+    var: binary_stat
+    verbosity: 2
+
+- name: Set cockroach binary permissions
+  file:
+    path: "/usr/local/bin/cockroach"
+    mode: '0755'
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Add to system PATH
+  file:
+    src: "/usr/local/bin/cockroach"
+    dest: "/usr/bin/cockroach"
+    state: link
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    mode: '0755'
+  loop:
+    - "{{ cockroachdb.data_dir }}"
+    - "{{ cockroachdb.log_dir }}"
+    - "{{ cockroachdb.certs_dir }}"
+  become: yes
+
+- name: Generate join list excluding current host
+  set_fact:
+   join_hosts: >-
+     {{
+       groups['cockroachdb_cluster'] |
+       map('extract', hostvars, ['ansible_host']) |
+       difference([ansible_host]) |
+       map('regex_replace', '$', ':' ~ cockroachdb.cluster_port) |
+       join(',')
+     }}
+
+- name: Stop CockroachDB if running
+  shell: pkill -f "cockroach.*start.*{{ cockroachdb.cluster_port }}" || true
+  become: yes
+
+- name: Wait for process to stop
+  wait_for:
+   path: "/proc/{{ item }}/status"
+   state: absent
+  become: yes
+  with_pipe: pgrep -f "cockroach.*start.*{{ cockroachdb.cluster_port }}"
+  ignore_errors: yes
+  register: wait_result
+  retries: 3
+  delay: 5
+  until: wait_result is success
+
+- name: Start CockroachDB node
+  shell: |
+   cockroach start \
+   --background \
+   --certs-dir={{ cockroachdb.certs_dir }} \
+   --store={{ cockroachdb.data_dir }} \
+   --listen-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+   --advertise-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+   --http-addr={{ ansible_host }}:{{ cockroachdb.http_port }} \
+   --sql-addr={{ ansible_host }}:{{ cockroachdb.sql_port }} \
+   --cache={{ cockroachdb.cache_size }} \
+   --max-sql-memory={{ cockroachdb.max_memory }} \
+   --join={{ join_hosts }}
+  args:
+   executable: /bin/bash
+  become: yes
+  become_user: root
+
+- name: Initialize cluster
+  command: cockroach init --certs-dir={{ cockroachdb.certs_dir }} --host={{ ansible_host }}:{{ cockroachdb.sql_port }}
+  when: inventory_hostname == groups['cockroachdb_cluster'][0]
+  become: yes
+  become_user: root
+  register: init_result
+  failed_when: init_result.rc != 0 and 'cluster has already been initialized' not in init_result.stderr
+
+#./roles/cockroachdb/meta/main.yml
+---
+dependencies:
+  - role: common
+
+#./inventories/production/hosts.yml
+[cockroachdb_cluster]
+node1 ansible_host=192.168.1.160 ansible_ssh_private_key_file=~/.ssh/id_rsa
+node2 ansible_host=192.168.1.161  ansible_ssh_private_key_file=~/.ssh/id_rsa
+node3 ansible_host=192.168.1.162  ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+#./inventories/production/group_vars/all/main.yml
+---
+system:
+  swappiness: 1
+  max_file_descriptors: 65536
+  transparent_hugepages: "never"
+  max_map_count: 262144
+  io_scheduler: deadline
+  cpu_governor: performance
+  numa_balancing: 0
+  kernel_shmmax: 68719476736
+  kernel_shmall: 4294967296
+  network_buffers:
+    rmem_max: 16777216
+    wmem_max: 16777216
+    tcp_rmem: "4096 87380 16777216"
+    tcp_wmem: "4096 87380 16777216"
+
+cockroachdb:
+  version: "23.1.11"  # Latest stable version
+  user: "cockroach"
+  group: "cockroach"
+  data_dir: "/var/lib/cockroachdb"
+  log_dir: "/var/log/cockroachdb"
+  certs_dir: "/opt/cockroachdb/certs"
+  http_port: 8080
+  sql_port: 26257
+  cluster_port: 26258
+  max_memory: "75%"  # Use 75% of available memory
+  cache_size: "25%"   # Use 25% of available memory for cache
+  max_disk_temp: "90%" # Disk usage threshold for temp storage
+  locality: "region=us-east,zone=us-east-1"  # Adjust for your environment
+
+security:
+  admin_user: "root"
+  admin_password: "{{ vault_cockroachdb_admin_password }}"
+  ssl:
+    enabled: true
+    ca_cert: "/opt/cockroachdb/certs/ca.crt"
+    node_cert: "/opt/cockroachdb/certs/node.crt"
+    node_key: "/opt/cockroachdb/certs/node.key"
+    client_cert: "/opt/cockroachdb/certs/client.root.crt"
+    client_key: "/opt/cockroachdb/certs/client.root.key"
+
+monitoring:
+  prometheus_node_exporter: true
+  prometheus_port: 9100
+  grafana_enabled: true
+
+trusted_networks: "192.168.1.0/24"
+admin_networks: "192.168.1.0/24"
+monitoring_networks: "192.168.1.0/24"
+
+
+
+#./inventories/production/group_vars/all/vault.yml
+---
+vault_cockroachdb_admin_password: "cdb"
+
+
+#./.vault_pass
+victor
+
+#./roles/monitoring/tasks/main.yml
+
+
+#./roles/common/tasks/main.yml
+- name: Update system
+  apt:
+    update_cache: yes
+    upgrade: yes
+
+- name: Install required packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - python3-pip
+      - ufw
+      - fail2ban
+      - chrony
+      - acl
+      - logrotate
+    state: present
+
+- name: Configure system limits
+  pam_limits:
+    domain: cockroach
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: soft, item: nofile, value: 65536 }
+    - { type: hard, item: nofile, value: 65536 }
+    - { type: soft, item: nproc, value: 32768 }
+    - { type: hard, item: nproc, value: 32768 }
+
+- name: Configure sysctl
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-cockroachdb.conf
+    reload: yes
+  loop:
+    - { name: "vm.swappiness", value: "1" }
+    - { name: "vm.max_map_count", value: "262144" }
+    - { name: "net.core.somaxconn", value: "65535" }
+    - { name: "net.ipv4.tcp_max_syn_backlog", value: "65535" }
+    - { name: "net.ipv4.tcp_syncookies", value: "1" }
+    - { name: "net.ipv4.tcp_fin_timeout", value: "30" }
+
+- name: Create cockroach group
+  group:
+    name: "{{ cockroachdb.group }}"
+    system: yes
+  become: yes
+
+- name: Create cockroach user
+  user:
+    name: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    shell: /bin/false
+    home: "{{ cockroachdb.data_dir }}"
+    create_home: no
+  become: yes
+
+- name: Debug cockroach user
+  command: getent passwd cockroach
+  register: debug_user
+- debug:
+    var: debug_user.stdout
+
+#./roles/security/tasks/main.yml
+---
+- name: Configure UFW
+  ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from | default(omit) }}"
+  loop:
+    - { port: "{{ cockroachdb.http_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.sql_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.cluster_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: 22, proto: tcp, from: "{{ admin_networks }}" }
+    - { port: "{{ monitoring.prometheus_port }}", proto: tcp, from: "{{ monitoring_networks }}" }
+
+- name: Configure SSL
+  block:
+    - name: Create SSL directory
+      file:
+        path: "{{ cockroachdb.certs_dir }}"
+        state: directory
+        owner: "{{ cockroachdb.user }}"
+        group: "{{ cockroachdb.group }}"
+        mode: '0750'
+
+    - name: Remove existing CA certificate and key
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "{{ cockroachdb.certs_dir }}/ca.crt"
+        - "{{ cockroachdb.certs_dir }}/ca.key"
+      become: yes
+
+    - name: Wait for file system to settle
+      pause:
+        seconds: 2
+
+    - name: Check if CA certificate exists
+      stat:
+        path: "{{ cockroachdb.certs_dir }}/ca.crt"
+      register: ca_crt_file
+      become: yes
+
+    - name: Fail if CA certificate still exists
+      fail:
+        msg: "CA certificate file still exists after removal!"
+      when: ca_crt_file.stat.exists
+
+    - name: Generate CA certificate
+      command: >
+        /usr/local/bin/cockroach cert create-ca
+        --certs-dir={{ cockroachdb.certs_dir }}
+        --ca-key={{ cockroachdb.certs_dir }}/ca.key
+        --overwrite
+      become: yes
+
+
+
+    - name: Remove existing node certificates
+      file:
+        path: "{{ cockroachdb.certs_dir }}/node.crt"
+        state: absent
+      become: yes
+
+    - name: Remove existing node key
+      file:
+        path: "{{ cockroachdb.certs_dir }}/node.key"
+        state: absent
+      become: yes
+
+    - name: Generate node certificates
+      command: >
+        /usr/local/bin/cockroach cert create-node {{ item }} localhost 127.0.0.1
+        --certs-dir={{ cockroachdb.certs_dir }}
+        --ca-key={{ cockroachdb.certs_dir }}/ca.key
+      become: yes
+      loop: "{{ groups['cockroachdb_cluster'] }}"
+
+    - name: Remove existing client certificates
+      file:
+        path: "{{ cockroachdb.certs_dir }}/client.root.crt"
+        state: absent
+      become: yes
+
+    - name: Generate client certificates
+      command: >
+        /usr/local/bin/cockroach cert create-client root
+        --certs-dir={{ cockroachdb.certs_dir }}
+        --ca-key={{ cockroachdb.certs_dir }}/ca.key
+      become: yes
+
+
+    - name: Set ownership of SSL directory
+      file:
+        path: "{{ cockroachdb.certs_dir }}"
+        owner: "{{ cockroachdb.user }}"
+        group: "{{ cockroachdb.group }}"
+        recurse: yes
+      become: yes
+  when: security.ssl.enabled
+
+#./roles/security/meta/main.yml
+---
+dependencies:
+  - role: common
+
+#./roles/cockroachdb/templates/local.ini.j2
+cluster-id: "cockroachdb-cluster"
+listen-addr: "{{ ansible_host }}:{{ cockroachdb.cluster_port }}"
+http-addr: "{{ ansible_host }}:{{ cockroachdb.http_port }}"
+sql-addr: "{{ ansible_host }}:{{ cockroachdb.sql_port }}"
+cache: "{{ cockroachdb.cache_size }}"
+max-sql-memory: "{{ cockroachdb.max_memory }}"
+max-disk-temp-storage: "{{ cockroachdb.max_disk_temp }}"
+locality: "{{ cockroachdb.locality }}"
+certs-dir: "{{ cockroachdb.certs_dir }}"
+log-dir: "{{ cockroachdb.log_dir }}"
+
+#./roles/cockroachdb/templates/cockroachdb.service.j2
+[Unit]
+Description=CockroachDB
+Requires=network.target
+
+[Service]
+Type=simple
+User={{ cockroachdb.user }}
+Group={{ cockroachdb.group }}
+ExecStart=/usr/local/bin/cockroach start \
+    --certs-dir={{ cockroachdb.certs_dir }} \
+    --store={{ cockroachdb.data_dir }} \
+    --listen-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+    --http-addr={{ ansible_host }}:{{ cockroachdb.http_port }} \
+    --sql-addr={{ ansible_host }}:{{ cockroachdb.sql_port }} \
+    --cache={{ cockroachdb.cache_size }} \
+    --max-sql-memory={{ cockroachdb.max_memory }} \
+    --max-disk-temp-storage={{ cockroachdb.max_disk_temp }} \
+    --locality={{ cockroachdb.locality }} \
+    --log-dir={{ cockroachdb.log_dir }} \
+    --join={{ groups['cockroachdb_cluster'] | map('extract', hostvars, ['ansible_host']) | join(':' + cockroachdb.cluster_port + ',') }}:{{ cockroachdb.cluster_port }}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cockroachdb
+
+[Install]
+WantedBy=multi-user.target
+
+#./roles/cockroachdb/tasks/main.yml
+- name: Download CockroachDB binary
+  get_url:
+    url: "https://binaries.cockroachdb.com/cockroach-v{{ cockroachdb.version }}.linux-amd64.tgz"
+    dest: "/tmp/cockroach.tgz"
+    mode: '0644'
+    validate_certs: no
+  become: yes
+  register: download_result
+  retries: 3
+  delay: 5
+  until: download_result is succeeded
+
+- name: Debug download result
+  debug:
+    var: download_result
+    verbosity: 2
+
+- name: Check if archive exists
+  stat:
+    path: "/tmp/cockroach.tgz"
+  register: archive_stat
+
+- name: Debug archive stat
+  debug:
+    var: archive_stat
+    verbosity: 2
+
+- name: Extract CockroachDB
+  unarchive:
+    src: "/tmp/cockroach.tgz"
+    dest: "/usr/local/bin/"
+    remote_src: yes
+    extra_opts: ["--strip-components=1"]
+  become: yes
+  register: extract_result
+  when: archive_stat.stat.exists
+
+- name: Debug extract result
+  debug:
+    var: extract_result
+    verbosity: 2
+
+- name: Check cockroach binary
+  stat:
+    path: "/usr/local/bin/cockroach"
+  register: binary_stat
+
+- name: Debug binary stat
+  debug:
+    var: binary_stat
+    verbosity: 2
+
+- name: Set cockroach binary permissions
+  file:
+    path: "/usr/local/bin/cockroach"
+    mode: '0755'
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Add to system PATH
+  file:
+    src: "/usr/local/bin/cockroach"
+    dest: "/usr/bin/cockroach"
+    state: link
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    mode: '0755'
+  loop:
+    - "{{ cockroachdb.data_dir }}"
+    - "{{ cockroachdb.log_dir }}"
+    - "{{ cockroachdb.certs_dir }}"
+  become: yes
+
+
+
+#./roles/cockroachdb/meta/main.yml
+---
+dependencies:
+  - role: common
+
+#./roles/startdb/tasks/main.yml
+- name: Generate join list excluding current host
+  set_fact:
+   join_hosts: >-
+     {{
+       groups['cockroachdb_cluster'] |
+       map('extract', hostvars, ['ansible_host']) |
+       difference([ansible_host]) |
+       map('regex_replace', '$', ':' ~ cockroachdb.cluster_port) |
+       join(',')
+     }}
+
+- name: Stop CockroachDB if running
+  shell: pkill -f "cockroach.*start.*{{ cockroachdb.cluster_port }}" || true
+  become: yes
+
+- name: Wait for process to stop
+  wait_for:
+   path: "/proc/{{ item }}/status"
+   state: absent
+  become: yes
+  with_pipe: pgrep -f "cockroach.*start.*{{ cockroachdb.cluster_port }}"
+  ignore_errors: yes
+  register: wait_result
+  retries: 3
+  delay: 5
+  until: wait_result is success
+
+- name: Start CockroachDB node
+  shell: |
+   cockroach start \
+   --background \
+   --certs-dir={{ cockroachdb.certs_dir }} \
+   --store={{ cockroachdb.data_dir }} \
+   --listen-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+   --advertise-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+   --http-addr={{ ansible_host }}:{{ cockroachdb.http_port }} \
+   --sql-addr={{ ansible_host }}:{{ cockroachdb.sql_port }} \
+   --cache={{ cockroachdb.cache_size }} \
+   --max-sql-memory={{ cockroachdb.max_memory }} \
+   --join={{ join_hosts }}
+  args:
+   executable: /bin/bash
+  become: yes
+  become_user: root
+
+- name: Initialize cluster
+  command: cockroach init --certs-dir={{ cockroachdb.certs_dir }} --host={{ ansible_host }}:{{ cockroachdb.sql_port }}
+  when: inventory_hostname == groups['cockroachdb_cluster'][0]
+  become: yes
+  become_user: root
+  register: init_result
+  failed_when: init_result.rc != 0 and 'cluster has already been initialized' not in init_result.stderr
+
+#./inventories/production/hosts.yml
+[cockroachdb_cluster]
+node1 ansible_host=192.168.1.160 ansible_ssh_private_key_file=~/.ssh/id_rsa
+node2 ansible_host=192.168.1.161  ansible_ssh_private_key_file=~/.ssh/id_rsa
+node3 ansible_host=192.168.1.162  ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+#./inventories/production/group_vars/all/main.yml
+---
+system:
+  swappiness: 1
+  max_file_descriptors: 65536
+  transparent_hugepages: "never"
+  max_map_count: 262144
+  io_scheduler: deadline
+  cpu_governor: performance
+  numa_balancing: 0
+  kernel_shmmax: 68719476736
+  kernel_shmall: 4294967296
+  network_buffers:
+    rmem_max: 16777216
+    wmem_max: 16777216
+    tcp_rmem: "4096 87380 16777216"
+    tcp_wmem: "4096 87380 16777216"
+
+cockroachdb:
+  version: "23.1.11"  # Latest stable version
+  user: "cockroach"
+  group: "cockroach"
+  data_dir: "/var/lib/cockroachdb"
+  log_dir: "/var/log/cockroachdb"
+  certs_dir: "/opt/cockroachdb/certs"
+  http_port: 8080
+  sql_port: 26257
+  cluster_port: 26258
+  max_memory: "75%"  # Use 75% of available memory
+  cache_size: "25%"   # Use 25% of available memory for cache
+  max_disk_temp: "90%" # Disk usage threshold for temp storage
+  locality: "region=us-east,zone=us-east-1"  # Adjust for your environment
+
+security:
+  admin_user: "root"
+  admin_password: "{{ vault_cockroachdb_admin_password }}"
+  ssl:
+    enabled: true
+    ca_cert: "/opt/cockroachdb/certs/ca.crt"
+    node_cert: "/opt/cockroachdb/certs/node.crt"
+    node_key: "/opt/cockroachdb/certs/node.key"
+    client_cert: "/opt/cockroachdb/certs/client.root.crt"
+    client_key: "/opt/cockroachdb/certs/client.root.key"
+
+monitoring:
+  prometheus_node_exporter: true
+  prometheus_port: 9100
+  grafana_enabled: true
+
+trusted_networks: "192.168.1.0/24"
+admin_networks: "192.168.1.0/24"
+monitoring_networks: "192.168.1.0/24"
+
+
+
+#./inventories/production/group_vars/all/vault.yml
+---
+vault_cockroachdb_admin_password: "cdb"
+
+
+#./.vault_pass
+victor
+
+#./roles/monitoring/tasks/main.yml
+
+
+#./roles/common/templates/templates/ntp.conf.j2
+driftfile /var/lib/ntp/ntp.drift
+
+statistics loopstats peerstats clockstats
+filegen loopstats file loopstats type day enable
+filegen peerstats file peerstats type day enable
+filegen clockstats file clockstats type day enable
+
+server time1.google.com iburst
+server time2.google.com iburst
+server time3.google.com iburst
+server time4.google.com iburst
+
+restrict -4 default kod notrap nomodify nopeer noquery limited
+restrict -6 default kod notrap nomodify nopeer noquery limited
+
+restrict 127.0.0.1
+restrict ::1
+
+#./roles/common/tasks/main.yml
+- name: Update system
+  apt:
+    update_cache: yes
+    upgrade: yes
+
+- name: Install required packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - python3-pip
+      - ufw
+      - fail2ban
+      - chrony
+      - acl
+      - logrotate
+    state: present
+
+- name: Configure system limits
+  pam_limits:
+    domain: cockroach
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: soft, item: nofile, value: 65536 }
+    - { type: hard, item: nofile, value: 65536 }
+    - { type: soft, item: nproc, value: 32768 }
+    - { type: hard, item: nproc, value: 32768 }
+
+- name: Configure sysctl
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-cockroachdb.conf
+    reload: yes
+  loop:
+    - { name: "vm.swappiness", value: "1" }
+    - { name: "vm.max_map_count", value: "262144" }
+    - { name: "net.core.somaxconn", value: "65535" }
+    - { name: "net.ipv4.tcp_max_syn_backlog", value: "65535" }
+    - { name: "net.ipv4.tcp_syncookies", value: "1" }
+    - { name: "net.ipv4.tcp_fin_timeout", value: "30" }
+
+- name: Create cockroach group
+  group:
+    name: "{{ cockroachdb.group }}"
+    system: yes
+  become: yes
+
+- name: Create cockroach user
+  user:
+    name: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    shell: /bin/false
+    home: "{{ cockroachdb.data_dir }}"
+    create_home: no
+  become: yes
+
+- name: Debug cockroach user
+  command: getent passwd cockroach
+  register: debug_user
+- debug:
+    var: debug_user.stdout
+
+#./roles/security/tasks/main.yml
+---
+- name: Configure UFW
+  ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from | default(omit) }}"
+  loop:
+    - { port: "{{ cockroachdb.http_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.sql_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.cluster_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: 22, proto: tcp, from: "{{ admin_networks }}" }
+    - { port: "{{ monitoring.prometheus_port }}", proto: tcp, from: "{{ monitoring_networks }}" }
+
+
+
+#./roles/security/meta/main.yml
+---
+dependencies:
+  - role: common
+
+#./roles/cockroachdb/templates/local.ini.j2
+cluster-id: "cockroachdb-cluster"
+listen-addr: "{{ ansible_host }}:{{ cockroachdb.cluster_port }}"
+http-addr: "{{ ansible_host }}:{{ cockroachdb.http_port }}"
+sql-addr: "{{ ansible_host }}:{{ cockroachdb.sql_port }}"
+cache: "{{ cockroachdb.cache_size }}"
+max-sql-memory: "{{ cockroachdb.max_memory }}"
+max-disk-temp-storage: "{{ cockroachdb.max_disk_temp }}"
+locality: "{{ cockroachdb.locality }}"
+certs-dir: "{{ cockroachdb.certs_dir }}"
+log-dir: "{{ cockroachdb.log_dir }}"
+
+#./roles/cockroachdb/tasks/main.yml
+- name: Download CockroachDB binary
+  get_url:
+    url: "https://binaries.cockroachdb.com/cockroach-v{{ cockroachdb.version }}.linux-amd64.tgz"
+    dest: "/tmp/cockroach.tgz"
+    mode: '0644'
+    validate_certs: no
+  become: yes
+  register: download_result
+  retries: 3
+  delay: 5
+  until: download_result is succeeded
+
+- name: Debug download result
+  debug:
+    var: download_result
+    verbosity: 2
+
+- name: Check if archive exists
+  stat:
+    path: "/tmp/cockroach.tgz"
+  register: archive_stat
+
+- name: Debug archive stat
+  debug:
+    var: archive_stat
+    verbosity: 2
+
+- name: Extract CockroachDB
+  unarchive:
+    src: "/tmp/cockroach.tgz"
+    dest: "/usr/local/bin/"
+    remote_src: yes
+    extra_opts: ["--strip-components=1"]
+  become: yes
+  register: extract_result
+  when: archive_stat.stat.exists
+
+- name: Debug extract result
+  debug:
+    var: extract_result
+    verbosity: 2
+
+- name: Check cockroach binary
+  stat:
+    path: "/usr/local/bin/cockroach"
+  register: binary_stat
+
+- name: Debug binary stat
+  debug:
+    var: binary_stat
+    verbosity: 2
+
+- name: Set cockroach binary permissions
+  file:
+    path: "/usr/local/bin/cockroach"
+    mode: '0755'
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Add to system PATH
+  file:
+    src: "/usr/local/bin/cockroach"
+    dest: "/usr/bin/cockroach"
+    state: link
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    mode: '0755'
+  loop:
+    - "{{ cockroachdb.data_dir }}"
+    - "{{ cockroachdb.log_dir }}"
+  become: yes
+
+
+
+#./roles/cockroachdb/meta/main.yml
+---
+dependencies:
+  - role: common
+
+#./roles/startdb/tasks/main.yml
+- name: Kill existing processes and cleanup
+  shell: |
+    pkill cockroach || true
+    rm -rf {{ cockroachdb.data_dir }}/cockroach-temp* || true
+  ignore_errors: yes
+
+- name: Ensure directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    mode: '0700'
+  with_items:
+    - "{{ cockroachdb.data_dir }}"
+    - "{{ cockroachdb.log_dir }}"
+
+- name: Generate join list
+  set_fact:
+    join_list: "{{ groups['cockroachdb_cluster'] | map('extract', hostvars, ['ansible_host']) | map('regex_replace', '$', ':' + (cockroachdb.cluster_port | string)) | join(',') }}"
+
+- name: Ensure no lingering lock files
+  shell: |
+    rm -f {{ cockroachdb.data_dir }}/LOCK
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+  become: yes
+
+
+- name: Start CockroachDB node
+  shell: |
+    cockroach start \
+    --background \
+    --store={{ cockroachdb.data_dir }} \
+    --advertise-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+    --http-addr={{ ansible_host }}:{{ cockroachdb.http_port }} \
+    --cache={{ cockroachdb.cache_size }} \
+    --max-sql-memory={{ cockroachdb.max_memory }} \
+    --join={{ join_list }} \
+    --insecure
+  become: yes
+  register: start_result
+  until: start_result.rc == 0
+  retries: 5
+  delay: 10
+
+
+#./inventories/production/hosts.yml
+[cockroachdb_cluster]
+node1 ansible_host=192.168.1.160 ansible_ssh_private_key_file=~/.ssh/id_rsa
+node2 ansible_host=192.168.1.161  ansible_ssh_private_key_file=~/.ssh/id_rsa
+node3 ansible_host=192.168.1.162  ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+#./inventories/production/group_vars/all/main.yml
+---
+system:
+  swappiness: 1
+  max_file_descriptors: 65536
+  transparent_hugepages: "never"
+  max_map_count: 262144
+  io_scheduler: deadline
+  cpu_governor: performance
+  numa_balancing: 0
+  kernel_shmmax: 68719476736
+  kernel_shmall: 4294967296
+  network_buffers:
+    rmem_max: 16777216
+    wmem_max: 16777216
+    tcp_rmem: "4096 87380 16777216"
+    tcp_wmem: "4096 87380 16777216"
+
+cockroachdb:
+  version: "24.3.2"  # Latest stable version
+  user: "cockroach"
+  group: "cockroach"
+  data_dir: "/var/lib/cockroachdb"
+  log_dir: "/var/log/cockroachdb"
+  certs_dir: ""  # No certificates directory
+  http_port: 8080
+  sql_port: 26258
+  cluster_port: 26257
+  max_memory: "25%"  # Use 75% of available memory
+  cache_size: "25%"  # Use 25% of available memory for cache
+  max_disk_temp: "90%"  # Disk usage threshold for temp storage
+  locality: "region=us-east,zone=us-east-1"  # Adjust for your environment
+  security:
+    admin_user: "root"
+    admin_password: "{{ vault_cockroachdb_admin_password }}"
+    ssl:
+      enabled: false  # Disable SSL
+
+
+monitoring:
+    prometheus_node_exporter: true
+    prometheus_port: 9100
+    grafana_enabled: true
+
+trusted_networks: "192.168.1.0/24"
+admin_networks: "192.168.1.0/24"
+monitoring_networks: "192.168.1.0/24"
+
+
+
+#./inventories/production/group_vars/all/vault.yml
+---
+vault_cockroachdb_admin_password: "cdb"
+
+
+#./.vault_pass
+victor
+
+#./roles/monitoring/tasks/main.yml
+
+
+#./roles/common/templates/templates/ntp.conf.j2
+driftfile /var/lib/ntp/ntp.drift
+
+statistics loopstats peerstats clockstats
+filegen loopstats file loopstats type day enable
+filegen peerstats file peerstats type day enable
+filegen clockstats file clockstats type day enable
+
+server time1.google.com iburst
+server time2.google.com iburst
+server time3.google.com iburst
+server time4.google.com iburst
+
+restrict -4 default kod notrap nomodify nopeer noquery limited
+restrict -6 default kod notrap nomodify nopeer noquery limited
+
+restrict 127.0.0.1
+restrict ::1
+
+#./roles/common/tasks/main.yml
+- name: Update system
+  apt:
+    update_cache: yes
+    upgrade: yes
+
+- name: Install required packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - python3-pip
+      - ufw
+      - fail2ban
+      - chrony
+      - acl
+      - logrotate
+      - net-tools
+    state: present
+
+- name: Configure system limits
+  pam_limits:
+    domain: cockroach
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: soft, item: nofile, value: 65536 }
+    - { type: hard, item: nofile, value: 65536 }
+    - { type: soft, item: nproc, value: 32768 }
+    - { type: hard, item: nproc, value: 32768 }
+
+- name: Configure sysctl
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-cockroachdb.conf
+    reload: yes
+  loop:
+    - { name: "vm.swappiness", value: "1" }
+    - { name: "vm.max_map_count", value: "262144" }
+    - { name: "net.core.somaxconn", value: "65535" }
+    - { name: "net.ipv4.tcp_max_syn_backlog", value: "65535" }
+    - { name: "net.ipv4.tcp_syncookies", value: "1" }
+    - { name: "net.ipv4.tcp_fin_timeout", value: "30" }
+
+- name: Create cockroach group
+  group:
+    name: "{{ cockroachdb.group }}"
+    system: yes
+  become: yes
+
+- name: Create cockroach user
+  user:
+    name: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    shell: /bin/false
+    home: "{{ cockroachdb.data_dir }}"
+    create_home: no
+  become: yes
+
+- name: Debug cockroach user
+  command: getent passwd cockroach
+  register: debug_user
+- debug:
+    var: debug_user.stdout
+
+#./roles/security/tasks/main.yml
+---
+- name: Configure UFW
+  ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from | default(omit) }}"
+  loop:
+    - { port: "{{ cockroachdb.http_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.sql_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.cluster_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: 22, proto: tcp, from: "{{ admin_networks }}" }
+    - { port: "{{ monitoring.prometheus_port }}", proto: tcp, from: "{{ monitoring_networks }}" }
+
+
+
+#./roles/security/meta/main.yml
+---
+dependencies:
+  - role: common
+
+#./roles/cockroachdb/templates/local.ini.j2
+cluster-id: "cockroachdb-cluster"
+listen-addr: "{{ ansible_host }}:{{ cockroachdb.cluster_port }}"
+http-addr: "{{ ansible_host }}:{{ cockroachdb.http_port }}"
+sql-addr: "{{ ansible_host }}:{{ cockroachdb.sql_port }}"
+cache: "{{ cockroachdb.cache_size }}"
+max-sql-memory: "{{ cockroachdb.max_memory }}"
+max-disk-temp-storage: "{{ cockroachdb.max_disk_temp }}"
+locality: "{{ cockroachdb.locality }}"
+certs-dir: "{{ cockroachdb.certs_dir }}"
+log-dir: "{{ cockroachdb.log_dir }}"
+
+#./roles/cockroachdb/tasks/main.yml
+- name: Download CockroachDB binary
+  get_url:
+    url: "https://binaries.cockroachdb.com/cockroach-v{{ cockroachdb.version }}.linux-amd64.tgz"
+    dest: "/tmp/cockroach.tgz"
+    mode: '0644'
+    validate_certs: no
+  become: yes
+  register: download_result
+  retries: 3
+  delay: 5
+  until: download_result is succeeded
+
+- name: Debug download result
+  debug:
+    var: download_result
+    verbosity: 2
+
+- name: Check if archive exists
+  stat:
+    path: "/tmp/cockroach.tgz"
+  register: archive_stat
+
+- name: Debug archive stat
+  debug:
+    var: archive_stat
+    verbosity: 2
+
+- name: Extract CockroachDB
+  unarchive:
+    src: "/tmp/cockroach.tgz"
+    dest: "/usr/local/bin/"
+    remote_src: yes
+    extra_opts: ["--strip-components=1"]
+  become: yes
+  register: extract_result
+  when: archive_stat.stat.exists
+
+- name: Debug extract result
+  debug:
+    var: extract_result
+    verbosity: 2
+
+- name: Check cockroach binary
+  stat:
+    path: "/usr/local/bin/cockroach"
+  register: binary_stat
+
+- name: Debug binary stat
+  debug:
+    var: binary_stat
+    verbosity: 2
+
+- name: Set cockroach binary permissions
+  file:
+    path: "/usr/local/bin/cockroach"
+    mode: '0755'
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Add to system PATH
+  file:
+    src: "/usr/local/bin/cockroach"
+    dest: "/usr/bin/cockroach"
+    state: link
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    mode: '0755'
+  loop:
+    - "{{ cockroachdb.data_dir }}"
+    - "{{ cockroachdb.log_dir }}"
+  become: yes
+
+
+
+#./roles/cockroachdb/meta/main.yml
+---
+dependencies:
+  - role: common
+
+#./roles/startdb/tasks/main.yml
+- name: Kill processes on port 8080
+  shell: |
+    netstat -tlpn | grep ':8080' | awk '{print $7}' | cut -d'/' -f1 | xargs -r kill -9
+  become: yes
+  ignore_errors: yes
+
+- name: Force cleanup any remaining CockroachDB processes
+  shell: |
+    pkill -9 cockroach || true
+    rm -rf {{ cockroachdb.data_dir }}/* 
+    rm -rf {{ cockroachdb.log_dir }}/*
+  become: yes
+  ignore_errors: yes
+
+- name: Wait for ports to be free
+  wait_for:
+    port: "{{ item }}"
+    state: stopped
+    timeout: 30
+  loop:
+    - "{{ cockroachdb.http_port }}"
+    - "{{ cockroachdb.sql_port }}"
+    - "{{ cockroachdb.cluster_port }}"
+
+- name: Ensure directories with proper permissions
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    mode: '0700'
+    recurse: yes
+  with_items:
+    - "{{ cockroachdb.data_dir }}"
+    - "{{ cockroachdb.log_dir }}"
+  become: yes
+
+- name: Generate join list
+  set_fact:
+    join_list: "{{ groups['cockroachdb_cluster'] | map('extract', hostvars, ['ansible_host']) | map('regex_replace', '$', ':' + (cockroachdb.cluster_port | string)) | join(',') }}"
+
+- name: Ensure no lingering lock files
+  shell: |
+    rm -f {{ cockroachdb.data_dir }}/LOCK
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+  become: yes
+
+
+- name: Start CockroachDB node
+  shell: |
+    cockroach start \
+    --background \
+    --store={{ cockroachdb.data_dir }} \
+    --advertise-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+    --http-addr={{ ansible_host }}:{{ cockroachdb.http_port }} \
+    --sql-addr={{ ansible_host }}:{{ cockroachdb.sql_port }} \
+    --cache={{ cockroachdb.cache_size }} \
+    --max-sql-memory={{ cockroachdb.max_memory }} \
+    --join={{ join_list }} \
+    --insecure
+  become: yes
+  register: start_result
+  until: start_result.rc == 0
+  retries: 5
+  delay: 10
+
+
+#./inventories/production/hosts.yml
+[cockroachdb_cluster]
+node1 ansible_host=192.168.1.160 ansible_ssh_private_key_file=~/.ssh/id_rsa
+node2 ansible_host=192.168.1.161  ansible_ssh_private_key_file=~/.ssh/id_rsa
+node3 ansible_host=192.168.1.162  ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+#./inventories/production/group_vars/all/main.yml
+---
+system:
+  swappiness: 1
+  max_file_descriptors: 65536
+  transparent_hugepages: "never"
+  max_map_count: 262144
+  io_scheduler: deadline
+  cpu_governor: performance
+  numa_balancing: 0
+  kernel_shmmax: 68719476736
+  kernel_shmall: 4294967296
+  network_buffers:
+    rmem_max: 16777216
+    wmem_max: 16777216
+    tcp_rmem: "4096 87380 16777216"
+    tcp_wmem: "4096 87380 16777216"
+
+cockroachdb:
+  version: "24.3.2"  # Latest stable version
+  user: "cockroach"
+  group: "cockroach"
+  data_dir: "/var/lib/cockroachdb"
+  log_dir: "/var/log/cockroachdb"
+  certs_dir: ""  # No certificates directory
+  http_port: 8080
+  sql_port: 26258
+  cluster_port: 26257
+  max_memory: "25%"  # Use 75% of available memory
+  cache_size: "25%"  # Use 25% of available memory for cache
+  max_disk_temp: "90%"  # Disk usage threshold for temp storage
+  locality: "region=us-east,zone=us-east-1"  # Adjust for your environment
+  security:
+    admin_user: "root"
+    admin_password: "{{ vault_cockroachdb_admin_password }}"
+    ssl:
+      enabled: false  # Disable SSL
+
+
+monitoring:
+    prometheus_node_exporter: true
+    prometheus_port: 9100
+    grafana_enabled: true
+
+trusted_networks: "192.168.1.0/24"
+admin_networks: "192.168.1.0/24"
+monitoring_networks: "192.168.1.0/24"
+
+
+
+#./inventories/production/group_vars/all/vault.yml
+---
+vault_cockroachdb_admin_password: "cdb"

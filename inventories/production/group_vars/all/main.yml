@@ -1,0 +1,47 @@
+---
+system:
+  swappiness: 1
+  max_file_descriptors: 65536
+  transparent_hugepages: "never"
+  max_map_count: 262144
+  io_scheduler: deadline
+  cpu_governor: performance
+  numa_balancing: 0
+  kernel_shmmax: 68719476736
+  kernel_shmall: 4294967296
+  network_buffers:
+    rmem_max: 16777216
+    wmem_max: 16777216
+    tcp_rmem: "4096 87380 16777216"
+    tcp_wmem: "4096 87380 16777216"
+
+cockroachdb:
+  version: "24.3.2"  # Latest stable version
+  user: "cockroach"
+  group: "cockroach"
+  data_dir: "/var/lib/cockroachdb"
+  log_dir: "/var/log/cockroachdb"
+  certs_dir: ""  # No certificates directory
+  http_port: 8080
+  sql_port: 26258
+  cluster_port: 26257
+  max_memory: "25%"  # Use 75% of available memory
+  cache_size: "25%"  # Use 25% of available memory for cache
+  max_disk_temp: "90%"  # Disk usage threshold for temp storage
+  locality: "region=us-east,zone=us-east-1"  # Adjust for your environment
+  security:
+    admin_user: "root"
+    admin_password: "{{ vault_cockroachdb_admin_password }}"
+    ssl:
+      enabled: false  # Disable SSL
+
+
+monitoring:
+    prometheus_node_exporter: true
+    prometheus_port: 9100
+    grafana_enabled: true
+
+trusted_networks: "192.168.1.0/24"
+admin_networks: "192.168.1.0/24"
+monitoring_networks: "192.168.1.0/24"
+

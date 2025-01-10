@@ -1,0 +1,67 @@
+- name: Kill processes on port 8080
+  shell: |
+    netstat -tlpn | grep ':8080' | awk '{print $7}' | cut -d'/' -f1 | xargs -r kill -9
+  become: yes
+  ignore_errors: yes
+
+- name: Force cleanup any remaining CockroachDB processes
+  shell: |
+    pkill -9 cockroach || true
+    rm -rf {{ cockroachdb.data_dir }}/* 
+    rm -rf {{ cockroachdb.log_dir }}/*
+  become: yes
+  ignore_errors: yes
+
+- name: Wait for ports to be free
+  wait_for:
+    port: "{{ item }}"
+    state: stopped
+    timeout: 30
+  loop:
+    - "{{ cockroachdb.http_port }}"
+    - "{{ cockroachdb.sql_port }}"
+    - "{{ cockroachdb.cluster_port }}"
+
+- name: Ensure directories with proper permissions
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    mode: '0700'
+    recurse: yes
+  with_items:
+    - "{{ cockroachdb.data_dir }}"
+    - "{{ cockroachdb.log_dir }}"
+  become: yes
+
+- name: Generate join list
+  set_fact:
+    join_list: "{{ groups['cockroachdb_cluster'] | map('extract', hostvars, ['ansible_host']) | map('regex_replace', '$', ':' + (cockroachdb.cluster_port | string)) | join(',') }}"
+
+- name: Ensure no lingering lock files
+  shell: |
+    rm -f {{ cockroachdb.data_dir }}/LOCK
+    sync
+    echo 3 > /proc/sys/vm/drop_caches
+  become: yes
+
+
+- name: Start CockroachDB node
+  shell: |
+    cockroach start \
+    --background \
+    --store={{ cockroachdb.data_dir }} \
+    --advertise-addr={{ ansible_host }}:{{ cockroachdb.cluster_port }} \
+    --http-addr={{ ansible_host }}:{{ cockroachdb.http_port }} \
+    --sql-addr={{ ansible_host }}:{{ cockroachdb.sql_port }} \
+    --cache={{ cockroachdb.cache_size }} \
+    --max-sql-memory={{ cockroachdb.max_memory }} \
+    --join={{ join_list }} \
+    --insecure
+  become: yes
+  register: start_result
+  until: start_result.rc == 0
+  retries: 5
+  delay: 10
+

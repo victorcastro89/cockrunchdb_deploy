@@ -1,0 +1,14 @@
+---
+- name: Configure UFW
+  ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from | default(omit) }}"
+  loop:
+    - { port: "{{ cockroachdb.http_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.sql_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: "{{ cockroachdb.cluster_port }}", proto: tcp, from: "{{ trusted_networks }}" }
+    - { port: 22, proto: tcp, from: "{{ admin_networks }}" }
+    - { port: "{{ monitoring.prometheus_port }}", proto: tcp, from: "{{ monitoring_networks }}" }
+

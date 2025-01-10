@@ -1,0 +1,21 @@
+---
+- name: Deploy CockroachDB Cluster
+  hosts: cockroachdb_cluster
+  become: yes
+
+  pre_tasks:
+    - name: Check system requirements
+      assert:
+        that:
+          - ansible_memtotal_mb >= 1024
+          - ansible_processor_vcpus >= 2
+        msg: "System does not meet minimum requirements"
+
+  roles:
+    - common
+    - cockroachdb
+    - security
+    - monitoring
+    - startdb
+
+

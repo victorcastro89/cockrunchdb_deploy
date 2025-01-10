@@ -1,0 +1,81 @@
+- name: Download CockroachDB binary
+  get_url:
+    url: "https://binaries.cockroachdb.com/cockroach-v{{ cockroachdb.version }}.linux-amd64.tgz"
+    dest: "/tmp/cockroach.tgz"
+    mode: '0644'
+    validate_certs: no
+  become: yes
+  register: download_result
+  retries: 3
+  delay: 5
+  until: download_result is succeeded
+
+- name: Debug download result
+  debug:
+    var: download_result
+    verbosity: 2
+
+- name: Check if archive exists
+  stat:
+    path: "/tmp/cockroach.tgz"
+  register: archive_stat
+
+- name: Debug archive stat
+  debug:
+    var: archive_stat
+    verbosity: 2
+
+- name: Extract CockroachDB
+  unarchive:
+    src: "/tmp/cockroach.tgz"
+    dest: "/usr/local/bin/"
+    remote_src: yes
+    extra_opts: ["--strip-components=1"]
+  become: yes
+  register: extract_result
+  when: archive_stat.stat.exists
+
+- name: Debug extract result
+  debug:
+    var: extract_result
+    verbosity: 2
+
+- name: Check cockroach binary
+  stat:
+    path: "/usr/local/bin/cockroach"
+  register: binary_stat
+
+- name: Debug binary stat
+  debug:
+    var: binary_stat
+    verbosity: 2
+
+- name: Set cockroach binary permissions
+  file:
+    path: "/usr/local/bin/cockroach"
+    mode: '0755'
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Add to system PATH
+  file:
+    src: "/usr/local/bin/cockroach"
+    dest: "/usr/bin/cockroach"
+    state: link
+  become: yes
+  when: binary_stat.stat.exists
+
+- name: Create required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cockroachdb.user }}"
+    group: "{{ cockroachdb.group }}"
+    mode: '0755'
+  loop:
+    - "{{ cockroachdb.data_dir }}"
+    - "{{ cockroachdb.log_dir }}"
+  become: yes
+
